@@ -1,7 +1,6 @@
 name: Sync jasna to Docker Hub
 
 on:
-  # ① 手动触发测试
   workflow_dispatch:
     inputs:
       tag:
@@ -12,26 +11,20 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 90   # 21GB超大镜像，延长超时到90分钟更稳妥
+    timeout-minutes: 90
 
     steps:
-      # 步骤1：安装 Skopeo
       - name: Install Skopeo
         run: |
           sudo apt-get update -y
           sudo apt-get install -y skopeo
           skopeo --version
 
-      # 步骤2：设置源&目标镜像地址（关键修改处）
       - name: Set image addresses
         id: addr
         run: |
           TAG="${{ github.event.inputs.tag || '0.7.2-cuda13' }}"
-
-          # 源地址：阿里云私有仓库 【把 jasna-vnc 改成 jasna】
           SRC="docker://${{ secrets.ACR_REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/jasna:${TAG}"
-
-          # 目标地址：DockerHub 仓库统一命名 jasna
           DST="docker://${{ secrets.DOCKERHUB_USERNAME }}/jasna:${TAG}"
 
           echo "SRC=${SRC}" >> $GITHUB_OUTPUT
@@ -40,18 +33,16 @@ jobs:
           echo "📦 源镜像: ${SRC}"
           echo "📦 目标镜像: ${DST}"
 
-      # 步骤3：skopeo跨仓复制镜像
+      # 移除了 --compression-format zstd 不兼容参数
       - name: Copy image ACR → Docker Hub
         run: |
           skopeo copy \
             --src-creds  "${{ secrets.ACR_USERNAME }}:${{ secrets.ACR_PASSWORD }}" \
             --dest-creds "${{ secrets.DOCKERHUB_USERNAME }}:${{ secrets.DOCKERHUB_TOKEN }}" \
             --retry-times 5 \
-            --compression-format zstd \
             ${{ steps.addr.outputs.SRC }} \
             ${{ steps.addr.outputs.DST }}
 
-      # 步骤4：校验同步结果
       - name: Verify destination digest
         run: |
           skopeo inspect \
