@@ -1,7 +1,7 @@
-name: Sync jasna-vnc to Docker Hub
+name: Sync jasna to Docker Hub
 
 on:
-  # ① 手动触发（推荐先用这个测试）
+  # ① 手动触发测试
   workflow_dispatch:
     inputs:
       tag:
@@ -9,38 +9,30 @@ on:
         required: true
         default: '0.7.2-cuda13'
 
-  # ② 监听你 push 代码时自动触发（可选，按需保留）
-  # push:
-  #   branches: [main]
-
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 60   # 21GB 镜像，给足超时时间
+    timeout-minutes: 90   # 21GB超大镜像，延长超时到90分钟更稳妥
 
     steps:
-      # ────────────────────────────────────────
       # 步骤1：安装 Skopeo
-      # ────────────────────────────────────────
       - name: Install Skopeo
         run: |
           sudo apt-get update -y
           sudo apt-get install -y skopeo
-          skopeo --version   # 打印版本确认安装成功
+          skopeo --version
 
-      # ────────────────────────────────────────
-      # 步骤2：设置镜像地址变量
-      # ────────────────────────────────────────
+      # 步骤2：设置源&目标镜像地址（关键修改处）
       - name: Set image addresses
         id: addr
         run: |
           TAG="${{ github.event.inputs.tag || '0.7.2-cuda13' }}"
 
-          # 源：阿里云 ACR
-          SRC="docker://${{ secrets.ACR_REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/jasna-vnc:${TAG}"
+          # 源地址：阿里云私有仓库 【把 jasna-vnc 改成 jasna】
+          SRC="docker://${{ secrets.ACR_REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/jasna:${TAG}"
 
-          # 目标：Docker Hub（格式：docker://用户名/镜像名:tag）
-          DST="docker://${{ secrets.DOCKERHUB_USERNAME }}/jasna-vnc:${TAG}"
+          # 目标地址：DockerHub 仓库统一命名 jasna
+          DST="docker://${{ secrets.DOCKERHUB_USERNAME }}/jasna:${TAG}"
 
           echo "SRC=${SRC}" >> $GITHUB_OUTPUT
           echo "DST=${DST}" >> $GITHUB_OUTPUT
@@ -48,29 +40,26 @@ jobs:
           echo "📦 源镜像: ${SRC}"
           echo "📦 目标镜像: ${DST}"
 
-      # ────────────────────────────────────────
-      # 步骤3：核心 - Skopeo 直接复制（不拉到本地）
-      # ────────────────────────────────────────
+      # 步骤3：skopeo跨仓复制镜像
       - name: Copy image ACR → Docker Hub
         run: |
           skopeo copy \
             --src-creds  "${{ secrets.ACR_USERNAME }}:${{ secrets.ACR_PASSWORD }}" \
             --dest-creds "${{ secrets.DOCKERHUB_USERNAME }}:${{ secrets.DOCKERHUB_TOKEN }}" \
-            --retry-times 3 \
+            --retry-times 5 \
+            --compression-format zstd \
             ${{ steps.addr.outputs.SRC }} \
             ${{ steps.addr.outputs.DST }}
 
-      # ────────────────────────────────────────
-      # 步骤4：验证目标镜像 digest（可选但推荐）
-      # ────────────────────────────────────────
+      # 步骤4：校验同步结果
       - name: Verify destination digest
         run: |
           skopeo inspect \
             --creds "${{ secrets.DOCKERHUB_USERNAME }}:${{ secrets.DOCKERHUB_TOKEN }}" \
             ${{ steps.addr.outputs.DST }} \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); print('✅ Digest:', d.get('Digest','N/A'))"
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print('✅ 同步成功，镜像Digest:', d.get('Digest'))"
 
       - name: Done
         run: |
-          echo "🎉 同步完成！"
-          echo "Docker Hub 镜像地址: ${{ steps.addr.outputs.DST }}"
+          echo "🎉 镜像同步全部完成！"
+          echo "Docker Hub 访问地址: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/jasna:${{ github.event.inputs.tag }}"
